@@ -1,0 +1,8 @@
+[project]
+name = "oscar"
+version = "0.1.0"
+description = "Local multi-timeframe swing setup scanner and trade ledger"
+requires-python = ">=3.9"
+
+[project.scripts]
+oscar = "oscar.cli:main"

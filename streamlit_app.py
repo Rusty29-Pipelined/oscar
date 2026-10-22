@@ -34,17 +34,20 @@ with st.expander("Run automatic NSE scan", expanded=True):
             start = date.today() - timedelta(days=int(lookback))
             end = date.today()
             rows = []
+            failures = []
             progress = st.progress(0, text=f"Fetching 0/{len(selected)} symbols")
             for index, symbol in enumerate(selected, 1):
                 try:
                     candles = upstox_candles(instruments[symbol], interval, str(end), str(start))
                     rows.extend(dict(row, symbol=symbol) for row in candles)
-                except Exception:
+                except Exception as exc:
+                    failures.append(f"{symbol}: {exc}")
                     continue
                 progress.progress(index / len(selected), text=f"Fetching {index}/{len(selected)} symbols")
             progress.empty()
             if not rows:
-                raise RuntimeError("Upstox returned no candles for the selected universe")
+                detail = " | ".join(failures[:3])
+                raise RuntimeError("Upstox returned no candles for the selected universe" + (f" ({detail})" if detail else ""))
             st.session_state["oscar_rows"] = rows
             st.success(f"Fetched {len(rows):,} candles for {len(selected)} symbols. Review the ranked results below.")
         except Exception as exc:

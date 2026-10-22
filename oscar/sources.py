@@ -71,7 +71,13 @@ def upstox_candles(instrument_key: str, interval: str, to_date: str, from_date: 
     if not token:
         raise RuntimeError("UPSTOX_ACCESS_TOKEN is not set")
     encoded = urllib.parse.quote(instrument_key, safe="")
-    path = f"/v3/historical-candle/{encoded}/{interval}/{to_date}"
+    interval_map = {
+        "1day": ("days", "1"), "day": ("days", "1"),
+        "1hour": ("hours", "1"), "4hour": ("hours", "4"),
+        "1week": ("weeks", "1"), "1wk": ("weeks", "1"), "week": ("weeks", "1"),
+    }
+    unit, width = interval_map.get(interval, ("minutes", str(interval).removesuffix("minute")))
+    path = f"/v3/historical-candle/{encoded}/{unit}/{width}/{to_date}"
     if from_date:
         path += f"/{from_date}"
     payload = json.loads(_request("https://api.upstox.com" + path, {"Accept": "application/json", "Authorization": f"Bearer {token}"}))

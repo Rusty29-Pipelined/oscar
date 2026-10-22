@@ -14,6 +14,12 @@ st.markdown("""<style>
 [data-testid="stMetric"]{background:#131418;border:1px solid #23252B;border-radius:12px;padding:12px}
 div.stButton>button{border:1px solid #2E3138;background:#1B1D22;color:#F2F3F5;border-radius:10px}
 </style>""", unsafe_allow_html=True)
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def load_upstox_instruments():
+    """Cache the relatively large Upstox master for the session/day."""
+    return upstox_equity_instruments()
+
 st.title("OSCAR")
 st.caption("Personal research desk · zero-cost mode · no broker orders")
 with st.expander("Run automatic NSE scan", expanded=True):
@@ -27,7 +33,10 @@ with st.expander("Run automatic NSE scan", expanded=True):
         try:
             if not __import__("os").environ.get("UPSTOX_ACCESS_TOKEN"):
                 raise RuntimeError("UPSTOX_ACCESS_TOKEN is not configured")
-            instruments = upstox_equity_instruments()
+            st.info("Loading the NSE equity universe…")
+            instruments = load_upstox_instruments()
+            if not instruments:
+                raise RuntimeError("Upstox returned an empty NSE equity universe")
             selected = sorted(instruments)
             if limit:
                 selected = selected[:int(limit)]

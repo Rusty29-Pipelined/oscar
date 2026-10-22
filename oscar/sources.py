@@ -46,7 +46,8 @@ def nse_equity_symbols() -> List[str]:
 
 def _request(url: str, headers: Optional[Dict[str, str]] = None) -> bytes:
     request = urllib.request.Request(url, headers=headers or {"User-Agent": "OSCAR/0.1 research"})
-    with urllib.request.urlopen(request, timeout=30) as response:
+    timeout = float(os.environ.get("OSCAR_HTTP_TIMEOUT", "15"))
+    with urllib.request.urlopen(request, timeout=timeout) as response:
         return response.read()
 
 

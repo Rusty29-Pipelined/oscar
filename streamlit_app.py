@@ -6,7 +6,7 @@ import streamlit as st
 from oscar.config import Config
 from oscar.data import load_csv
 from oscar.setups import detect
-from oscar.sources import nse_equity_symbols, upstox_equity_instruments, upstox_candles
+from oscar.sources import upstox_equity_instruments, upstox_candles
 
 st.set_page_config(page_title="OSCAR · Research desk", page_icon="◈", layout="wide")
 st.markdown("""<style>
@@ -27,9 +27,8 @@ with st.expander("Run automatic NSE scan", expanded=True):
         try:
             if not __import__("os").environ.get("UPSTOX_ACCESS_TOKEN"):
                 raise RuntimeError("UPSTOX_ACCESS_TOKEN is not configured")
-            symbols = nse_equity_symbols()
             instruments = upstox_equity_instruments()
-            selected = [s for s in symbols if s in instruments]
+            selected = sorted(instruments)
             if limit:
                 selected = selected[:int(limit)]
             start = date.today() - timedelta(days=int(lookback))

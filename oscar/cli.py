@@ -116,8 +116,7 @@ def main(argv=None):
         return 0
     if args.command == "fetch-upstox-universe":
         instruments = upstox_equity_instruments()
-        symbols = nse_equity_symbols()
-        selected = [s for s in symbols if s in instruments]
+        selected = sorted(instruments)
         if args.limit:
             selected = selected[:args.limit]
         total = 0; failed = 0

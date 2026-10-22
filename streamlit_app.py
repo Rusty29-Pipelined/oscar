@@ -49,10 +49,11 @@ with st.expander("Run automatic NSE scan", expanded=True):
                             period1 = int((date.today() - timedelta(days=int(lookback))).strftime("%s"))
                             candles = fallback_candles(symbol + ".NS", "1d", period1)
                             rows.extend(dict(row, symbol=symbol, timeframe="1day") for row in candles)
-                        except Exception:
-                            pass
-                    continue
-                progress.progress(index / len(selected), text=f"Fetching {index}/{len(selected)} symbols")
+                        except Exception as fallback_exc:
+                            failures.append(f"{symbol} fallback: {fallback_exc}")
+                finally:
+                    # Always advance the progress bar, including failed/fallback requests.
+                    progress.progress(index / len(selected), text=f"Fetching {index}/{len(selected)} symbols")
             progress.empty()
             if not rows:
                 detail = " | ".join(failures[:3])

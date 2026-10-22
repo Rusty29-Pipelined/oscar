@@ -6,7 +6,7 @@ import streamlit as st
 from oscar.config import Config
 from oscar.data import load_csv
 from oscar.setups import detect
-from oscar.sources import upstox_equity_instruments, upstox_candles
+from oscar.sources import upstox_equity_instruments, upstox_candles, fallback_candles
 
 st.set_page_config(page_title="OSCAR · Research desk", page_icon="◈", layout="wide")
 st.markdown("""<style>
@@ -42,6 +42,15 @@ with st.expander("Run automatic NSE scan", expanded=True):
                     rows.extend(dict(row, symbol=symbol) for row in candles)
                 except Exception as exc:
                     failures.append(f"{symbol}: {exc}")
+                    # Keyless daily/weekly fallback keeps research scans usable
+                    # when Upstox history is temporarily unavailable.
+                    if interval == "1day":
+                        try:
+                            period1 = int((date.today() - timedelta(days=int(lookback))).strftime("%s"))
+                            candles = fallback_candles(symbol + ".NS", "1d", period1)
+                            rows.extend(dict(row, symbol=symbol, timeframe="1day") for row in candles)
+                        except Exception:
+                            pass
                     continue
                 progress.progress(index / len(selected), text=f"Fetching {index}/{len(selected)} symbols")
             progress.empty()

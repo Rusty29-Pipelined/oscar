@@ -1,10 +1,15 @@
 import unittest
 from unittest.mock import patch
 
-from oscar.sources import fallback_candles, stooq_candles
+from oscar.sources import fallback_candles, stooq_candles, nse_equity_symbols
 
 
 class SourceTests(unittest.TestCase):
+    def test_nse_universe_filters_eq_symbols(self):
+        payload = b"SYMBOL,SERIES\nRELIANCE,EQ\nNIFTY,INDEX\nTCS,EQ\n"
+        with patch("oscar.sources._request", return_value=payload):
+            self.assertEqual(nse_equity_symbols(), ["RELIANCE", "TCS"])
+
     def test_stooq_normalizes_daily_csv(self):
         payload = b"Symbol,Date,Open,High,Low,Close,Volume\nreliance.in,2026-01-02,100,110,95,108,1234\n"
         with patch("oscar.sources._request", return_value=payload):

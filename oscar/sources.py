@@ -10,6 +10,7 @@ import os
 import urllib.parse
 import urllib.request
 import zipfile
+import gzip
 import time
 from datetime import date, timedelta
 from pathlib import Path
@@ -17,6 +18,30 @@ from typing import Iterable, List, Dict, Optional
 
 
 FIELDS = ["symbol", "date", "timeframe", "open", "high", "low", "close", "volume"]
+
+
+def nse_equity_symbols() -> List[str]:
+    """Return the current NSE cash-equity symbol universe (EQ series only)."""
+    urls = (
+        "https://nsearchives.nseindia.com/content/equities/EQUITY_L.csv",
+        "https://archives.nseindia.com/content/equities/EQUITY_L.csv",
+    )
+    errors = []
+    for url in urls:
+        try:
+            raw = _request(url, {"User-Agent": "Mozilla/5.0 OSCAR research", "Accept": "text/csv,*/*"})
+            reader = csv.DictReader(io.StringIO(raw.decode("utf-8-sig")))
+            symbols = []
+            for row in reader:
+                symbol = (row.get("SYMBOL") or row.get("Symbol") or "").strip().upper()
+                series = (row.get(" SERIES") or row.get("SERIES") or "EQ").strip().upper()
+                if symbol and series == "EQ":
+                    symbols.append(symbol)
+            if symbols:
+                return sorted(set(symbols))
+        except Exception as exc:
+            errors.append(str(exc))
+    raise RuntimeError("Unable to load NSE equity universe: " + " | ".join(errors))
 
 
 def _request(url: str, headers: Optional[Dict[str, str]] = None) -> bytes:
@@ -56,6 +81,21 @@ def upstox_candles(instrument_key: str, interval: str, to_date: str, from_date: 
         timestamp, op, hi, lo, close, volume = candle[:6]
         rows.append({"symbol": instrument_key, "date": timestamp, "timeframe": interval, "open": op, "high": hi, "low": lo, "close": close, "volume": volume})
     return rows
+
+
+def upstox_equity_instruments() -> Dict[str, str]:
+    """Return NSE cash-equity trading symbol -> Upstox instrument key."""
+    raw = _request("https://assets.upstox.com/market-quote/instruments/exchange/complete.json.gz")
+    payload = json.loads(gzip.decompress(raw).decode("utf-8"))
+    result = {}
+    for item in payload:
+        if item.get("segment") != "NSE_EQ" or item.get("instrument_type") not in ("EQ", ""):
+            continue
+        symbol = (item.get("trading_symbol") or "").strip().upper()
+        key = item.get("instrument_key")
+        if symbol and key:
+            result[symbol] = key
+    return result
 
 
 def nse_bhavcopy(day: str, url_template: Optional[str] = None) -> List[dict]:

@@ -4,8 +4,9 @@ from .data import load_csv
 from .report import write_csv
 from .setups import detect
 from .backtest import run, summary, write_trades
-from .sources import nse_bhavcopy, upstox_candles, public_chart_candles, fallback_candles, jugaad_candles, write_rows
+from .sources import nse_bhavcopy, nse_equity_symbols, upstox_equity_instruments, upstox_candles, public_chart_candles, fallback_candles, jugaad_candles, write_rows
 import csv
+from datetime import date, timedelta
 from collections import defaultdict
 from .paper import open_from_scan, close_trade
 from .alerts import write_alerts
@@ -27,12 +28,20 @@ def main(argv=None):
     nse = sub.add_parser("fetch-nse", help="fetch one NSE Bhavcopy day")
     nse.add_argument("--date", required=True, help="YYYY-MM-DD")
     nse.add_argument("--output", required=True)
+    universe = sub.add_parser("nse-universe", help="write the current NSE equity symbol universe")
+    universe.add_argument("--output", required=True)
     up = sub.add_parser("fetch-upstox", help="fetch Upstox historical candles")
     up.add_argument("--instrument-key", required=True)
     up.add_argument("--interval", required=True, help="Upstox V3 interval")
     up.add_argument("--to", required=True, dest="to_date")
     up.add_argument("--from", dest="from_date")
     up.add_argument("--output", required=True)
+    upu = sub.add_parser("fetch-upstox-universe", help="fetch NSE EQ candles through Upstox")
+    upu.add_argument("--output", required=True)
+    upu.add_argument("--interval", default="1day")
+    upu.add_argument("--from", dest="from_date", required=True)
+    upu.add_argument("--to", dest="to_date", default=str(date.today()))
+    upu.add_argument("--limit", type=int, default=0, help="optional symbol limit for testing")
     public = sub.add_parser("fetch-public", help="fetch public chart candles as a fallback")
     public.add_argument("--symbol", required=True, help="Yahoo-style symbol, e.g. RELIANCE.NS")
     public.add_argument("--interval", default="1d")
@@ -93,10 +102,35 @@ def main(argv=None):
         write_rows(rows, args.output)
         print(f"Fetched {len(rows)} NSE EQ rows to {args.output}")
         return 0
+    if args.command == "nse-universe":
+        symbols = nse_equity_symbols()
+        with open(args.output, "w", newline="") as handle:
+            writer = csv.writer(handle); writer.writerow(["symbol"])
+            writer.writerows([[symbol] for symbol in symbols])
+        print(f"Loaded {len(symbols)} NSE EQ symbols to {args.output}")
+        return 0
     if args.command == "fetch-upstox":
         rows = upstox_candles(args.instrument_key, args.interval, args.to_date, args.from_date)
         write_rows(rows, args.output)
         print(f"Fetched {len(rows)} Upstox candles to {args.output}")
+        return 0
+    if args.command == "fetch-upstox-universe":
+        instruments = upstox_equity_instruments()
+        symbols = nse_equity_symbols()
+        selected = [s for s in symbols if s in instruments]
+        if args.limit:
+            selected = selected[:args.limit]
+        total = 0; failed = 0
+        for symbol in selected:
+            try:
+                rows = upstox_candles(instruments[symbol], args.interval, args.to_date, args.from_date)
+                normalized = [dict(row, symbol=symbol) for row in rows]
+                write_rows(normalized, args.output, "a" if total else "w")
+                total += len(normalized)
+            except Exception as exc:
+                failed += 1
+                print(f"WARN {symbol}: {exc}")
+        print(f"Fetched {total} candles for {len(selected) - failed}/{len(selected)} symbols to {args.output}")
         return 0
     if args.command == "fetch-public":
         rows = public_chart_candles(args.symbol, args.interval, args.period1, args.period2)

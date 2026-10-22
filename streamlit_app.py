@@ -1,10 +1,12 @@
 """Zero-cost OSCAR deployment entrypoint for Streamlit Community Cloud."""
 import io
 import csv
+from datetime import date, timedelta
 import streamlit as st
 from oscar.config import Config
 from oscar.data import load_csv
 from oscar.setups import detect
+from oscar.sources import nse_equity_symbols, upstox_equity_instruments, upstox_candles
 
 st.set_page_config(page_title="OSCAR · Research desk", page_icon="◈", layout="wide")
 st.markdown("""<style>
@@ -14,9 +16,48 @@ div.stButton>button{border:1px solid #2E3138;background:#1B1D22;color:#F2F3F5;bo
 </style>""", unsafe_allow_html=True)
 st.title("OSCAR")
 st.caption("Personal research desk · zero-cost mode · no broker orders")
-uploaded = st.file_uploader("Upload normalized OHLCV CSV", type=["csv"], help="Required columns: symbol,date/timeframe,open,high,low,close,volume")
+with st.expander("Run automatic NSE scan", expanded=True):
+    st.caption("Uses the configured Upstox read-only token. No orders are placed.")
+    left, right = st.columns(2)
+    interval = left.selectbox("Timeframe", ["1day", "1hour", "4hour", "1week"], index=0)
+    lookback = right.slider("Lookback (days)", 30, 730, 365)
+    limit = st.number_input("Symbols (0 = all NSE equities)", min_value=0, max_value=2500, value=50, step=50)
+    run_scan = st.button("Run Upstox NSE scan", type="primary")
+    if run_scan:
+        try:
+            if not __import__("os").environ.get("UPSTOX_ACCESS_TOKEN"):
+                raise RuntimeError("UPSTOX_ACCESS_TOKEN is not configured")
+            symbols = nse_equity_symbols()
+            instruments = upstox_equity_instruments()
+            selected = [s for s in symbols if s in instruments]
+            if limit:
+                selected = selected[:int(limit)]
+            start = date.today() - timedelta(days=int(lookback))
+            end = date.today()
+            rows = []
+            progress = st.progress(0, text=f"Fetching 0/{len(selected)} symbols")
+            for index, symbol in enumerate(selected, 1):
+                try:
+                    candles = upstox_candles(instruments[symbol], interval, str(end), str(start))
+                    rows.extend(dict(row, symbol=symbol) for row in candles)
+                except Exception:
+                    continue
+                progress.progress(index / len(selected), text=f"Fetching {index}/{len(selected)} symbols")
+            progress.empty()
+            if not rows:
+                raise RuntimeError("Upstox returned no candles for the selected universe")
+            st.session_state["oscar_rows"] = rows
+            st.success(f"Fetched {len(rows):,} candles for {len(selected)} symbols. Review the ranked results below.")
+        except Exception as exc:
+            st.error(f"Automatic scan failed: {exc}")
+
+uploaded = st.file_uploader("Or upload normalized OHLCV CSV", type=["csv"], help="Required columns: symbol,date/timeframe,open,high,low,close,volume")
+if "oscar_rows" in st.session_state and uploaded is None:
+    output = io.StringIO(); writer = csv.DictWriter(output, fieldnames=["symbol", "date", "timeframe", "open", "high", "low", "close", "volume"])
+    writer.writeheader(); writer.writerows(st.session_state["oscar_rows"])
+    uploaded = io.BytesIO(output.getvalue().encode())
 if uploaded is None:
-    st.info("Upload a normalized data file to run a scan. Use the CLI data adapters to create one.")
+    st.info("Run the automatic Upstox scan above, or upload a normalized data file.")
     st.stop()
 raw = uploaded.getvalue()
 try:

@@ -4,6 +4,7 @@ Adapters emit the normalized CSV contract used by the scanner. Network access
 is intentionally opt-in; no credentials are stored in the repository.
 """
 import csv
+import hashlib
 import io
 import json
 import os
@@ -31,28 +32,86 @@ def _kite_headers() -> Dict[str, str]:
 
 def kite_equity_instruments() -> Dict[str, int]:
     """Return NSE EQ trading symbol -> Kite instrument token."""
-    raw = _request("https://api.kite.trade/instruments/NSE", _kite_headers())
+    raw = _kite_get("https://api.kite.trade/instruments/NSE")
     reader = csv.DictReader(io.StringIO(raw.decode("utf-8-sig")))
     result = {}
     for item in reader:
         if item.get("segment") != "NSE" or item.get("instrument_type") != "EQ":
             continue
         symbol = (item.get("tradingsymbol") or "").strip().upper()
+        # Kite lists bonds, G-secs and non-EQ series (e.g. "-N0", "-SG", "-BE")
+        # as instrument_type EQ, plus ETF iNAV feeds; plain symbols are EQ-series stocks.
+        if "-" in symbol or symbol.endswith("INAV"):
+            continue
         token = item.get("instrument_token")
         if symbol and token:
             result[symbol] = int(token)
     return result
 
 
+# Kite caps each historical request by interval and allows ~3 requests/second.
+KITE_MAX_DAYS = {"day": 2000, "60minute": 400}
+KITE_MIN_GAP_SECONDS = 0.35
+_last_kite_call = [0.0]
+
+
+def kite_login_url() -> str:
+    return "https://kite.zerodha.com/connect/login?v=3&api_key=" + urllib.parse.quote(os.environ.get("KITE_API_KEY", ""))
+
+
+def kite_exchange_request_token(request_token: str) -> dict:
+    """Swap a login request_token for a session (access_token, user_id)."""
+    api_key = os.environ.get("KITE_API_KEY")
+    secret = os.environ.get("KITE_API_SECRET")
+    if not api_key or not secret:
+        raise RuntimeError("KITE_API_KEY and KITE_API_SECRET are required for Kite login")
+    checksum = hashlib.sha256((api_key + request_token + secret).encode()).hexdigest()
+    body = urllib.parse.urlencode({"api_key": api_key, "request_token": request_token, "checksum": checksum}).encode()
+    request = urllib.request.Request("https://api.kite.trade/session/token", body, {"X-Kite-Version": "3"})
+    try:
+        with urllib.request.urlopen(request, timeout=15) as response:
+            return json.loads(response.read().decode("utf-8"))["data"]
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="replace")
+        try:
+            detail = json.loads(detail).get("message") or detail
+        except ValueError:
+            pass
+        raise RuntimeError(f"Kite login failed (HTTP {exc.code}): {str(detail)[:300]}") from None
+
+
+def _kite_get(url: str) -> bytes:
+    """Throttled Kite GET with one retry on rate limiting."""
+    for attempt in range(2):
+        wait = KITE_MIN_GAP_SECONDS - (time.monotonic() - _last_kite_call[0])
+        if wait > 0:
+            time.sleep(wait)
+        _last_kite_call[0] = time.monotonic()
+        try:
+            return _request(url, _kite_headers())
+        except RuntimeError as exc:
+            if attempt == 0 and str(exc).startswith("HTTP Error 429"):
+                time.sleep(1.0)
+                continue
+            raise
+
+
 def kite_candles(instrument_token: int, interval: str, to_date: str, from_date: Optional[str] = None, symbol: str = "") -> List[dict]:
     """Fetch Kite historical candles and normalize them to OSCAR rows."""
     interval_map = {"1day": "day", "day": "day", "1hour": "60minute", "4hour": "60minute", "1week": "day", "1wk": "day"}
     kite_interval = interval_map.get(interval, interval)
-    start = from_date or to_date
+    end = date.fromisoformat(to_date)
+    start = date.fromisoformat(from_date or to_date)
+    step = timedelta(days=KITE_MAX_DAYS.get(kite_interval, 60) - 1)
     path = f"https://api.kite.trade/instruments/historical/{int(instrument_token)}/{kite_interval}"
-    query = urllib.parse.urlencode({"from": start, "to": to_date})
-    payload = json.loads(_request(path + "?" + query, _kite_headers()).decode("utf-8"))
-    candles = payload.get("data", {}).get("candles", [])
+    candles = []
+    chunk_start = start
+    while chunk_start <= end:
+        chunk_end = min(chunk_start + step, end)
+        query = urllib.parse.urlencode({"from": str(chunk_start), "to": str(chunk_end)})
+        payload = json.loads(_kite_get(path + "?" + query).decode("utf-8"))
+        candles.extend(payload.get("data", {}).get("candles", []))
+        chunk_start = chunk_end + timedelta(days=1)
     rows = []
     for candle in candles:
         timestamp, op, hi, lo, close, volume = candle[:6]

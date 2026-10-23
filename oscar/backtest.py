@@ -63,10 +63,14 @@ def _evaluate(candidate: Candidate, future: List[Candle], commission_pct: float 
 
 
 def run(groups: Dict, cfg: Config, horizon: int = 20) -> List[Dict[str, object]]:
+    if horizon < 1:
+        raise ValueError("horizon must be at least 1 bar")
     trades = []
     for (_, _), candles in groups.items():
         next_available = {}
-        for index in range(cfg.min_history_sessions, len(candles) - 1):
+        # Only count signals with a complete forward evaluation window. Partial
+        # windows at the right edge otherwise make recent trades incomparable.
+        for index in range(cfg.min_history_sessions, len(candles) - horizon):
             prefix = candles[:index + 1]
             candidates = detect(prefix, cfg)
             for candidate in candidates:

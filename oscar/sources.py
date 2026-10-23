@@ -8,6 +8,7 @@ import io
 import json
 import os
 import urllib.parse
+import urllib.error
 import urllib.request
 import zipfile
 import time
@@ -103,8 +104,21 @@ def nse_equity_symbols() -> List[str]:
 def _request(url: str, headers: Optional[Dict[str, str]] = None) -> bytes:
     request = urllib.request.Request(url, headers=headers or {"User-Agent": "OSCAR/0.1 research"})
     timeout = float(os.environ.get("OSCAR_HTTP_TIMEOUT", "15"))
-    with urllib.request.urlopen(request, timeout=timeout) as response:
-        return response.read()
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            return response.read()
+    except urllib.error.HTTPError as exc:
+        body = exc.read().decode("utf-8", errors="replace")
+        detail = ""
+        try:
+            payload = json.loads(body)
+            detail = payload.get("message") or payload.get("error") or ""
+            if isinstance(detail, dict):
+                detail = detail.get("message") or detail.get("error") or ""
+        except (TypeError, ValueError):
+            detail = ""
+        detail = str(detail or body or exc.reason).strip()[:300]
+        raise RuntimeError(f"HTTP Error {exc.code}: {detail}") from None
 
 
 def write_rows(rows: Iterable[dict], path: str, mode: str = "w") -> None:

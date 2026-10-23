@@ -1,7 +1,9 @@
 import unittest
 from unittest.mock import patch
+from urllib.error import HTTPError
+from io import BytesIO
 
-from oscar.sources import fallback_candles, stooq_candles, nse_equity_symbols
+from oscar.sources import _request, fallback_candles, stooq_candles, nse_equity_symbols
 
 
 class SourceTests(unittest.TestCase):
@@ -27,3 +29,9 @@ class SourceTests(unittest.TestCase):
         with patch("oscar.sources.public_chart_candles", side_effect=RuntimeError("offline")):
             with self.assertRaises(RuntimeError):
                 fallback_candles("X.NS", "1h")
+
+    def test_http_errors_include_provider_reason(self):
+        error = HTTPError("https://example.test", 403, "Forbidden", {}, BytesIO(b'{"message":"Insufficient permission"}'))
+        with patch("oscar.sources.urllib.request.urlopen", side_effect=error):
+            with self.assertRaisesRegex(RuntimeError, "HTTP Error 403: Insufficient permission"):
+                _request("https://example.test")

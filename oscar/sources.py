@@ -10,7 +10,6 @@ import os
 import urllib.parse
 import urllib.request
 import zipfile
-import gzip
 import time
 from datetime import date, timedelta
 from pathlib import Path
@@ -18,6 +17,63 @@ from typing import Iterable, List, Dict, Optional
 
 
 FIELDS = ["symbol", "date", "timeframe", "open", "high", "low", "close", "volume"]
+
+
+def _kite_headers() -> Dict[str, str]:
+    """Headers for Kite Connect v3 market-data requests."""
+    api_key = os.environ.get("KITE_API_KEY")
+    access_token = os.environ.get("KITE_ACCESS_TOKEN")
+    if not api_key or not access_token:
+        raise RuntimeError("KITE_API_KEY and KITE_ACCESS_TOKEN are required")
+    return {"X-Kite-Version": "3", "Authorization": f"token {api_key}:{access_token}", "Accept": "application/json"}
+
+
+def kite_equity_instruments() -> Dict[str, int]:
+    """Return NSE EQ trading symbol -> Kite instrument token."""
+    raw = _request("https://api.kite.trade/instruments/NSE", _kite_headers())
+    reader = csv.DictReader(io.StringIO(raw.decode("utf-8-sig")))
+    result = {}
+    for item in reader:
+        if item.get("segment") != "NSE" or item.get("instrument_type") != "EQ":
+            continue
+        symbol = (item.get("tradingsymbol") or "").strip().upper()
+        token = item.get("instrument_token")
+        if symbol and token:
+            result[symbol] = int(token)
+    return result
+
+
+def kite_candles(instrument_token: int, interval: str, to_date: str, from_date: Optional[str] = None, symbol: str = "") -> List[dict]:
+    """Fetch Kite historical candles and normalize them to OSCAR rows."""
+    interval_map = {"1day": "day", "day": "day", "1hour": "60minute", "4hour": "60minute", "1week": "day", "1wk": "day"}
+    kite_interval = interval_map.get(interval, interval)
+    start = from_date or to_date
+    path = f"https://api.kite.trade/instruments/historical/{int(instrument_token)}/{kite_interval}"
+    query = urllib.parse.urlencode({"from": start, "to": to_date})
+    payload = json.loads(_request(path + "?" + query, _kite_headers()).decode("utf-8"))
+    candles = payload.get("data", {}).get("candles", [])
+    rows = []
+    for candle in candles:
+        timestamp, op, hi, lo, close, volume = candle[:6]
+        rows.append({"symbol": symbol, "date": timestamp, "timeframe": interval, "open": op, "high": hi, "low": lo, "close": close, "volume": volume})
+    # Kite has no native 4-hour or weekly candle endpoint; aggregate daily/hourly
+    # data in the scanner later rather than silently labeling 60-minute candles.
+    if interval == "4hour":
+        rows = _aggregate_rows(rows, 4)
+    elif interval in ("1week", "1wk"):
+        rows = _aggregate_rows(rows, 5)
+    return rows
+
+
+def _aggregate_rows(rows: List[dict], bucket: int) -> List[dict]:
+    """Small deterministic OHLCV aggregation helper for Kite intervals."""
+    if not rows:
+        return rows
+    result = []
+    for start in range(0, len(rows), bucket):
+        group = rows[start:start + bucket]
+        result.append({"symbol": group[0]["symbol"], "date": group[0]["date"], "timeframe": group[0]["timeframe"], "open": group[0]["open"], "high": max(r["high"] for r in group), "low": min(r["low"] for r in group), "close": group[-1]["close"], "volume": sum(float(r["volume"] or 0) for r in group)})
+    return result
 
 
 def nse_equity_symbols() -> List[str]:
@@ -60,49 +116,6 @@ def write_rows(rows: Iterable[dict], path: str, mode: str = "w") -> None:
         if not exists:
             writer.writeheader()
         writer.writerows(rows)
-
-
-def upstox_candles(instrument_key: str, interval: str, to_date: str, from_date: Optional[str] = None) -> List[dict]:
-    """Fetch Upstox V3 historical candles using UPSTOX_ACCESS_TOKEN.
-
-    Upstox's response is newest-first and its API interval names vary by
-    endpoint; callers pass values accepted by the current V3 API.
-    """
-    token = os.environ.get("UPSTOX_ACCESS_TOKEN")
-    if not token:
-        raise RuntimeError("UPSTOX_ACCESS_TOKEN is not set")
-    encoded = urllib.parse.quote(instrument_key, safe="")
-    interval_map = {
-        "1day": ("days", "1"), "day": ("days", "1"),
-        "1hour": ("hours", "1"), "4hour": ("hours", "4"),
-        "1week": ("weeks", "1"), "1wk": ("weeks", "1"), "week": ("weeks", "1"),
-    }
-    unit, width = interval_map.get(interval, ("minutes", str(interval).removesuffix("minute")))
-    path = f"/v3/historical-candle/{encoded}/{unit}/{width}/{to_date}"
-    if from_date:
-        path += f"/{from_date}"
-    payload = json.loads(_request("https://api.upstox.com" + path, {"Accept": "application/json", "Authorization": f"Bearer {token}"}))
-    candles = payload.get("data", {}).get("candles", [])
-    rows = []
-    for candle in reversed(candles):
-        timestamp, op, hi, lo, close, volume = candle[:6]
-        rows.append({"symbol": instrument_key, "date": timestamp, "timeframe": interval, "open": op, "high": hi, "low": lo, "close": close, "volume": volume})
-    return rows
-
-
-def upstox_equity_instruments() -> Dict[str, str]:
-    """Return NSE cash-equity trading symbol -> Upstox instrument key."""
-    raw = _request("https://assets.upstox.com/market-quote/instruments/exchange/complete.json.gz")
-    payload = json.loads(gzip.decompress(raw).decode("utf-8"))
-    result = {}
-    for item in payload:
-        if item.get("segment") != "NSE_EQ" or item.get("instrument_type") not in ("EQ", ""):
-            continue
-        symbol = (item.get("trading_symbol") or "").strip().upper()
-        key = item.get("instrument_key")
-        if symbol and key:
-            result[symbol] = key
-    return result
 
 
 def nse_bhavcopy(day: str, url_template: Optional[str] = None) -> List[dict]:

@@ -130,10 +130,7 @@ with scan_tab:
 
     result = st.session_state.get("scan")
     if result:
-        if result["market_ok"]:
-            st.success(f"Market filter ON (Nifty above 200-DMA, 50-DMA rising) · data as of {result['as_of']} · {result['count']} stocks scanned")
-        else:
-            st.error(f"Market filter OFF · no new buys today (Nifty below 200-DMA or 50-DMA falling) · data as of {result['as_of']}")
+        st.caption(f"Data as of {result['as_of']} · {result['count']} stocks scanned")
         buys = [r for r in result["rows"] if r["action"].startswith("BUY")]
         watch = [r for r in result["rows"] if r["action"] == "WATCH"]
         cols = ["symbol", "entry", "stop_loss", "stop_pct", "target_1", "target_2", "target_3", "t1_pct", "breakout_date"]

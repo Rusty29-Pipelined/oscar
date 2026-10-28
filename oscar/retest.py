@@ -2,7 +2,7 @@
 
   Breakout day: close > 50-DMA > 200-DMA, close above the prior 59-session high (R)
   on >= 1.5x the prior 20-session average volume, and no more than ~10% above R.
-  Market filter: Nifty above its 200-DMA and Nifty 50-DMA rising over 10 sessions.
+  Trend is checked on the stock itself: its 50-DMA must be rising over 10 sessions. No index filter.
   Liquidity: price >= Rs 50, 50-session average traded value >= Rs 10 Cr, no zero-volume days.
   Entry: first close within 10 sessions that retests R (low <= R+2%, close >= R-2%); buy next open.
   Stop: 0.5% under the 59-session base low before the breakout, never more than 10% below entry.
@@ -71,7 +71,7 @@ class _Series:
         if not (self.s200[b] and cl > self.s50[b] > self.s200[b] and cl > R and avg_v > 0
                 and v >= VOL_MULT * avg_v and cl <= R * MAX_CHASE):
             return None
-        if not self.regime.get(day(self.c[b]), False):
+        if not (self.s50[b - 10] and self.s50[b] > self.s50[b - 10]):  # the stock's own 50-DMA is rising
             return None
         if cl < MIN_PRICE or (self.atv50[b] or 0) < MIN_TRADED_VALUE or min(self.v[b - 49:b + 1]) <= 0:
             return None

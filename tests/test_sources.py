@@ -37,7 +37,7 @@ class SourceTests(unittest.TestCase):
                 _request("https://example.test")
 
     def test_kite_universe_skips_bonds_series_and_inav(self):
-        payload = b"instrument_token,tradingsymbol,segment,instrument_type\n1,RELIANCE,NSE,EQ\n6,BAJAJ-AUTO,NSE,EQ\n2,0HFL28-N0,NSE,EQ\n3,OMFURN-SM,NSE,EQ\n4,ABSLLQINAV,NSE,EQ\n5,NIFTY 50,INDICES,EQ\n"
+        payload = b"instrument_token,tradingsymbol,name,segment,instrument_type\n1,RELIANCE,RELIANCE INDUSTRIES,NSE,EQ\n6,BAJAJ-AUTO,BAJAJ AUTO,NSE,EQ\n7,NIFTYBEES,NIPPON INDIA ETF NIFTY 50 BEES,NSE,EQ\n8,SMALLGROWW,GROWWAMC - SMALLGROWW,NSE,EQ\n2,0HFL28-N0,,NSE,EQ\n3,OMFURN-SM,,NSE,EQ\n4,ABSLLQINAV,,NSE,EQ\n5,NIFTY 50,,INDICES,EQ\n"
         with patch("oscar.sources._kite_get", return_value=payload):
             self.assertEqual(kite_equity_instruments(), {"RELIANCE": 1, "BAJAJ-AUTO": 6})
 

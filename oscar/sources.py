@@ -44,6 +44,10 @@ def kite_equity_instruments() -> Dict[str, int]:
         # BAJAJ-AUTO are real EQ-series stocks.
         if ("-" in symbol and len(symbol.rsplit("-", 1)[1]) <= 2) or symbol.endswith("INAV"):
             continue
+        # ETFs and index funds ("NIPPON INDIA ETF ...", "GROWWAMC - SMALLGROWW") are not stocks.
+        name = (item.get("name") or "").upper()
+        if "ETF" in name or "BEES" in name or name.split(" - ")[0].strip().endswith("AMC"):
+            continue
         token = item.get("instrument_token")
         if symbol and token:
             result[symbol] = int(token)

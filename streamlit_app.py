@@ -136,16 +136,16 @@ with scan_tab:
             st.error(f"Market filter OFF · no new buys today (Nifty below 200-DMA or 50-DMA falling) · data as of {result['as_of']}")
         buys = [r for r in result["rows"] if r["action"].startswith("BUY")]
         watch = [r for r in result["rows"] if r["action"] == "WATCH"]
-        cols = ["symbol", "entry", "stop_loss", "stop_pct", "target_1", "target_2", "target_3", "breakout_level", "breakout_date"]
+        cols = ["symbol", "entry", "stop_loss", "stop_pct", "target_1", "target_2", "target_3", "t1_pct", "breakout_date"]
         st.subheader(f"Buy at next open · {len(buys)}")
         if buys:
             st.dataframe([{k: r[k] for k in cols} for r in buys], use_container_width=True, hide_index=True)
-            st.caption("Entry shown at today's close; recalculate levels from the actual open. Book half at T-1 and move the stop to entry; exit the rest at T-3, a close below the 20-DMA, or after 60 sessions.")
+            st.caption("Entry shown at today's close. Stop is the base low, max 10%. Targets are the next chart resistance levels (prior swing highs, else measured moves). Sell a third at each target, move the stop to entry after T-1, close the rest after 40 sessions.")
         else:
             st.write("None today.")
         st.subheader(f"Watchlist (broke out, waiting for retest) · {len(watch)}")
         if watch:
-            st.dataframe([{"symbol": r["symbol"], "buy_zone": r["buy_zone"], "stop_loss": r["stop_loss"], "last_close": r["last_close"], "breakout_date": r["breakout_date"]} for r in watch],
+            st.dataframe([{"symbol": r["symbol"], "buy_zone": r["buy_zone"], "stop_loss": r["stop_loss"], "target_1": r["target_1"], "target_2": r["target_2"], "target_3": r["target_3"], "last_close": r["last_close"], "breakout_date": r["breakout_date"]} for r in watch],
                          use_container_width=True, hide_index=True)
         else:
             st.write("None today.")
@@ -194,7 +194,7 @@ with backtest_tab:
             b.metric("Average per trade", f"{s['avg_return']:+.2f}%")
             c.metric("Profit factor", s["profit_factor"] if s["profit_factor"] is not None else "n/a")
             d.metric("Worst trade", f"{s['worst']:.1f}%", f"max losing streak {s['max_losing_streak']}", delta_color="off")
-            st.caption(f"Average win {s['avg_win']:+.2f}% · average loss {s['avg_loss']:.2f}% · best trade {s['best']:+.1f}%")
+            st.caption(f"Average win {s['avg_win']:+.2f}% · average loss {s['avg_loss']:.2f}% · targets hit: T-1 {s['t1_hit_pct']}%, T-2 {s['t2_hit_pct']}%, T-3 {s['t3_hit_pct']}% · average {s['avg_days']} days per trade")
             st.download_button("Download trade ledger", csv_bytes(result["trades"]), "oscar-backtest.csv", "text/csv")
         if result["skipped"]:
             with st.expander(f"Skipped for data problems · {len(result['skipped'])}"):

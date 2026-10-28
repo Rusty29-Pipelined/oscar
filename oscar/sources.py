@@ -39,9 +39,10 @@ def kite_equity_instruments() -> Dict[str, int]:
         if item.get("segment") != "NSE" or item.get("instrument_type") != "EQ":
             continue
         symbol = (item.get("tradingsymbol") or "").strip().upper()
-        # Kite lists bonds, G-secs and non-EQ series (e.g. "-N0", "-SG", "-BE")
-        # as instrument_type EQ, plus ETF iNAV feeds; plain symbols are EQ-series stocks.
-        if "-" in symbol or symbol.endswith("INAV"):
+        # Kite lists bonds, G-secs and non-EQ series (two-character suffixes such as
+        # "-N0", "-SG", "-BE") as instrument_type EQ, plus ETF iNAV feeds. Names like
+        # BAJAJ-AUTO are real EQ-series stocks.
+        if ("-" in symbol and len(symbol.rsplit("-", 1)[1]) <= 2) or symbol.endswith("INAV"):
             continue
         token = item.get("instrument_token")
         if symbol and token:

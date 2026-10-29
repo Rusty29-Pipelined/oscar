@@ -16,6 +16,7 @@ from typing import Dict, List, Optional, Tuple
 COST_PER_SIDE = 0.002  # ~0.15% charges + 0.05% slippage
 LOOKBACK, VOL_MULT, MAX_CHASE, TOL, WINDOW, MAX_HOLD = 59, 1.5, 1.102, 0.02, 10, 40
 MAX_STOP = 0.10
+NEAR_HIGH = 0.05  # ready list: close within 5% of the 60-session high
 SWING_SPAN, RESISTANCE_YEARS = 5, 500  # swing high = highest of +/-5 sessions, looked for over ~2 years
 MIN_PRICE, MIN_TRADED_VALUE = 50.0, 1e8
 SPLIT_GAP = 0.35  # an overnight move this large is treated as an unadjusted corporate action
@@ -127,6 +128,24 @@ def scan(symbol: str, candles: List, regime: Dict[str, bool]) -> Optional[Dict[s
             return None
         return dict(base, action="WATCH", buy_zone=f"{R * (1 - TOL):.2f} - {R * (1 + TOL):.2f}", **levels(R, stop, s.targets(b, R, R, stop)))
     return None
+
+
+def ready(symbol: str, candles: List) -> Optional[Dict[str, object]]:
+    """Heads-up list: healthy, liquid stock within NEAR_HIGH of its 60-session high, not yet broken out."""
+    s = _Series(candles, {})
+    i = len(candles) - 1
+    if i < 250 or not (s.s200[i] and s.s200[i - 21] and s.cl[i] > s.s200[i] > s.s200[i - 21]):
+        return None
+    if s.cl[i] < MIN_PRICE or (s.atv50[i] or 0) < MIN_TRADED_VALUE or min(s.v[i - 49:i + 1]) <= 0:
+        return None
+    level = max(s.h[i - LOOKBACK:i + 1])
+    if s.cl[i] < level * (1 - NEAR_HIGH):
+        return None
+    entry = level * 1.002
+    stop = max(min(s.l[i - LOOKBACK:i + 1]) * 0.995, entry * (1 - MAX_STOP))
+    return dict(symbol=symbol, last_close=round(s.cl[i], 2), buy_above=round(entry, 2),
+                pct_away=round((entry / s.cl[i] - 1) * 100, 1),
+                **{k: v for k, v in levels(entry, stop, s.targets(i + 1, level, entry, stop)).items() if k != "entry"})
 
 
 def backtest(symbol: str, candles: List, regime: Dict[str, bool]) -> List[Dict[str, object]]:

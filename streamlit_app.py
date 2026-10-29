@@ -112,7 +112,7 @@ with scan_tab:
             symbols = sorted(instruments)[:int(limit)] if limit else sorted(instruments)
             nifty = candles(NIFTY_50_TOKEN, "NIFTY 50", 500)
             regime = retest.market_regime(nifty)
-            rows, skipped = [], []
+            rows, ready, skipped = [], [], []
 
             def check(symbol, series):
                 problem = retest.data_problem(series[-300:])
@@ -122,8 +122,12 @@ with scan_tab:
                     hit = retest.scan(symbol, series, regime)
                     if hit:
                         rows.append(hit)
+                    else:
+                        near = retest.ready(symbol, series)
+                        if near:
+                            ready.append(near)
             fetch_all(symbols, instruments, 500, "Scanning", check)
-            st.session_state["scan"] = {"rows": rows, "skipped": skipped, "market_ok": regime.get(retest.day(nifty[-1]), False),
+            st.session_state["scan"] = {"rows": rows, "ready": sorted(ready, key=lambda r: r["pct_away"]), "skipped": skipped, "market_ok": regime.get(retest.day(nifty[-1]), False),
                                         "as_of": retest.day(nifty[-1]), "count": len(symbols)}
         except Exception as exc:
             st.session_state.pop("scan", None)
@@ -145,6 +149,14 @@ with scan_tab:
         if watch:
             st.dataframe([{"symbol": r["symbol"], "buy_zone": r["buy_zone"], "stop_loss": r["stop_loss"], "target_1": r["target_1"], "target_2": r["target_2"], "target_3": r["target_3"], "last_close": r["last_close"], "breakout_date": r["breakout_date"]} for r in watch],
                          use_container_width=True, hide_index=True)
+        else:
+            st.write("None today.")
+        near = result.get("ready", [])
+        st.subheader(f"Ready to break out (within 5% of the 60-day high) · {len(near)}")
+        if near:
+            st.dataframe([{k: r[k] for k in ("symbol", "last_close", "buy_above", "pct_away", "stop_loss", "stop_pct", "target_1", "target_2", "target_3")} for r in near],
+                         use_container_width=True, hide_index=True)
+            st.caption("Heads-up list, not a buy signal. A stock moves to the Watchlist when it closes above buy_above on 1.5x volume, then to Buy on the retest.")
         else:
             st.write("None today.")
         if result["rows"]:

@@ -40,3 +40,19 @@ class RetestTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ReadyListTest(unittest.TestCase):
+    def test_ready_near_high_and_skips_far(self):
+        from oscar.models import Candle
+        def series(last_close):
+            cs = [Candle("X", f"d{i:04d}", "1d", 100 + i * 0.2, 101 + i * 0.2, 99 + i * 0.2, 100 + i * 0.2, 2e6) for i in range(300)]
+            p = cs[-1]
+            cs[-1] = Candle("X", p.timestamp, "1d", last_close, last_close + 0.5, last_close - 0.5, last_close, 2e6)
+            return cs
+        near = retest.ready("X", series(158.5))
+        self.assertIsNotNone(near)
+        self.assertGreater(near["buy_above"], near["last_close"])
+        self.assertLessEqual(near["stop_pct"], 10.0)
+        self.assertLess(near["target_1"], near["target_2"])
+        self.assertIsNone(retest.ready("X", series(145.0)))

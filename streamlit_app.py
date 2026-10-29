@@ -47,33 +47,42 @@ def candles(token, symbol, days):
     return [Candle(symbol, str(r["date"]), "1d", float(r["open"]), float(r["high"]), float(r["low"]), float(r["close"]), float(r["volume"])) for r in rows]
 
 
+MAX_MISSED = 0.02  # beyond 2% of symbols unfetchable after retries, the run is treated as failed
+
+
 def fetch_all(symbols, instruments, days, label, handle):
     """Fetch and process one symbol at a time so candles are not all held in memory.
-    Any provider failure stops the run (no partial results)."""
-    failures = []
-    bar = st.progress(0, text=f"{label}: 0/{len(symbols)}")
-    for i, symbol in enumerate(symbols, 1):
+
+    Each request already retries timeouts and server errors; symbols that still fail get a second pass.
+    A handful left after that (at most MAX_MISSED, e.g. a suspended stock) are returned by name and shown
+    to the user as not checked. An expired login or a wider outage stops the run with no results.
+    """
+    def attempt(symbol):
         try:
             series = candles(instruments[symbol], symbol, days)
         except Exception as exc:
-            failures.append(f"{symbol}: {exc}")
-        else:
+            return f"{symbol}: {exc}"
+        try:
             handle(symbol, series)
+        except Exception as exc:  # a bug on one stock's data must not sink the whole scan
+            return f"{symbol}: could not be analysed ({type(exc).__name__}: {exc})"
+        return None
+
+    bar = st.progress(0, text=f"{label}: 0/{len(symbols)}")
+    failures = []
+    for i, symbol in enumerate(symbols, 1):
+        error = attempt(symbol)
+        if error:
+            failures.append((symbol, error))
+            if "HTTP Error 403" in error:
+                bar.empty()
+                raise RuntimeError("Kite session expired or was rejected, so no results are shown. Click Login with Kite and run again. " + error)
         bar.progress(i / len(symbols), text=f"{label}: {i}/{len(symbols)}")
     bar.empty()
-    retry = [] if any("HTTP Error 403" in f for f in failures) else [f.split(": ", 1)[0] for f in failures]
-    if retry:  # second pass for symbols that still failed after the per-request retries
-        failures = []
-    for symbol in retry:
-        try:
-            series = candles(instruments[symbol], symbol, days)
-        except Exception as exc:
-            failures.append(f"{symbol}: {exc}")
-        else:
-            handle(symbol, series)
-    if failures:
-        hint = " Kite session looks expired: click Login with Kite." if any("403" in f for f in failures) else ""
-        raise RuntimeError(f"{len(failures)} of {len(symbols)} symbols failed, so no results are shown.{hint} " + " | ".join(failures[:5]))
+    missed = [e for e in (attempt(sym) for sym, _ in failures) if e]
+    if len(missed) > max(1, int(len(symbols) * MAX_MISSED)):
+        raise RuntimeError(f"{len(missed)} of {len(symbols)} symbols failed, so no results are shown. " + " | ".join(missed[:5]))
+    return missed
 
 
 def csv_bytes(rows):
@@ -136,8 +145,8 @@ with scan_tab:
                         near = retest.ready(symbol, series)
                         if near:
                             ready.append(near)
-            fetch_all(symbols, instruments, 500, "Scanning", check)
-            st.session_state["scan"] = {"rows": rows, "ready": sorted(ready, key=lambda r: r["pct_away"]), "skipped": skipped, "market_ok": regime.get(retest.day(nifty[-1]), False),
+            missed = fetch_all(symbols, instruments, 500, "Scanning", check)
+            st.session_state["scan"] = {"rows": rows, "missed": missed, "ready": sorted(ready, key=lambda r: r["pct_away"]), "skipped": skipped, "market_ok": regime.get(retest.day(nifty[-1]), False),
                                         "as_of": retest.day(nifty[-1]), "count": len(symbols)}
         except Exception as exc:
             st.session_state.pop("scan", None)
@@ -146,6 +155,8 @@ with scan_tab:
     result = st.session_state.get("scan")
     if result:
         st.caption(f"Data as of {result['as_of']} · {result['count']} stocks scanned")
+        if result.get("missed"):
+            st.warning(f"{len(result['missed'])} stock(s) could not be fetched even after retries and were not checked: " + " | ".join(result["missed"]))
         buys = [r for r in result["rows"] if r["action"].startswith("BUY")]
         watch = [r for r in result["rows"] if r["action"] == "WATCH"]
         cols = ["symbol", "entry", "stop_loss", "stop_pct", "target_1", "target_2", "target_3", "t1_pct", "breakout_date"]
@@ -196,7 +207,8 @@ with backtest_tab:
                     skipped.append(f"{symbol}: {problem}")
                 else:
                     trades.extend(retest.backtest(symbol, series, regime))
-            fetch_all(symbols, instruments, days, "Backtesting", test)
+            missed = fetch_all(symbols, instruments, days, "Backtesting", test)
+            skipped += [f"{m} (not fetched)" for m in missed]
             st.session_state["backtest"] = {"trades": trades, "summary": retest.summarize(trades), "skipped": skipped,
                                             "count": len(symbols) - len(skipped), "years": bt_years}
         except Exception as exc:

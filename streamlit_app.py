@@ -47,21 +47,23 @@ def candles(token, symbol, days):
     return [Candle(symbol, str(r["date"]), "1d", float(r["open"]), float(r["high"]), float(r["low"]), float(r["close"]), float(r["volume"])) for r in rows]
 
 
-def fetch_all(symbols, instruments, days, label):
-    """Fetch every symbol; any provider failure stops the run (no partial results)."""
-    data, failures = {}, []
+def fetch_all(symbols, instruments, days, label, handle):
+    """Fetch and process one symbol at a time so candles are not all held in memory.
+    Any provider failure stops the run (no partial results)."""
+    failures = []
     bar = st.progress(0, text=f"{label}: 0/{len(symbols)}")
     for i, symbol in enumerate(symbols, 1):
         try:
-            data[symbol] = candles(instruments[symbol], symbol, days)
+            series = candles(instruments[symbol], symbol, days)
         except Exception as exc:
             failures.append(f"{symbol}: {exc}")
+        else:
+            handle(symbol, series)
         bar.progress(i / len(symbols), text=f"{label}: {i}/{len(symbols)}")
     bar.empty()
     if failures:
         hint = " Kite session looks expired: click Login with Kite." if any("403" in f for f in failures) else ""
         raise RuntimeError(f"{len(failures)} of {len(symbols)} symbols failed, so no results are shown.{hint} " + " | ".join(failures[:5]))
-    return data
 
 
 def csv_bytes(rows):
@@ -110,18 +112,17 @@ with scan_tab:
             symbols = sorted(instruments)[:int(limit)] if limit else sorted(instruments)
             nifty = candles(NIFTY_50_TOKEN, "NIFTY 50", 500)
             regime = retest.market_regime(nifty)
-            data = fetch_all(symbols, instruments, 500, "Fetching")
             rows, skipped = [], []
-            for symbol, series in data.items():
+
+            def check(symbol, series):
                 problem = retest.data_problem(series[-300:])
                 if problem:
                     skipped.append(f"{symbol}: {problem}")
-                    continue
-                if len(series) < 251:
-                    continue
-                hit = retest.scan(symbol, series, regime)
-                if hit:
-                    rows.append(hit)
+                elif len(series) >= 251:
+                    hit = retest.scan(symbol, series, regime)
+                    if hit:
+                        rows.append(hit)
+            fetch_all(symbols, instruments, 500, "Scanning", check)
             st.session_state["scan"] = {"rows": rows, "skipped": skipped, "market_ok": regime.get(retest.day(nifty[-1]), False),
                                         "as_of": retest.day(nifty[-1]), "count": len(symbols)}
         except Exception as exc:
@@ -165,14 +166,15 @@ with backtest_tab:
                 raise ValueError("Not found in Kite NSE equities: " + ", ".join(missing))
             days = int(bt_years * 365.25)
             regime = retest.market_regime(candles(NIFTY_50_TOKEN, "NIFTY 50", days))
-            data = fetch_all(symbols, instruments, days, "Fetching history")
             trades, skipped = [], []
-            for symbol, series in data.items():
+
+            def test(symbol, series):
                 problem = retest.data_problem(series)
                 if problem:
                     skipped.append(f"{symbol}: {problem}")
-                    continue
-                trades += retest.backtest(symbol, series, regime)
+                else:
+                    trades.extend(retest.backtest(symbol, series, regime))
+            fetch_all(symbols, instruments, days, "Backtesting", test)
             st.session_state["backtest"] = {"trades": trades, "summary": retest.summarize(trades), "skipped": skipped,
                                             "count": len(symbols) - len(skipped), "years": bt_years}
         except Exception as exc:

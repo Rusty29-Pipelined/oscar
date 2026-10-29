@@ -61,6 +61,16 @@ def fetch_all(symbols, instruments, days, label, handle):
             handle(symbol, series)
         bar.progress(i / len(symbols), text=f"{label}: {i}/{len(symbols)}")
     bar.empty()
+    retry = [] if any("HTTP Error 403" in f for f in failures) else [f.split(": ", 1)[0] for f in failures]
+    if retry:  # second pass for symbols that still failed after the per-request retries
+        failures = []
+    for symbol in retry:
+        try:
+            series = candles(instruments[symbol], symbol, days)
+        except Exception as exc:
+            failures.append(f"{symbol}: {exc}")
+        else:
+            handle(symbol, series)
     if failures:
         hint = " Kite session looks expired: click Login with Kite." if any("403" in f for f in failures) else ""
         raise RuntimeError(f"{len(failures)} of {len(symbols)} symbols failed, so no results are shown.{hint} " + " | ".join(failures[:5]))

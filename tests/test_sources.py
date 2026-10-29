@@ -52,3 +52,32 @@ class SourceTests(unittest.TestCase):
         self.assertIn("from=2025-01-01&to=2026-02-04", urls[0])
         self.assertIn("from=2026-02-05&to=2026-10-24", urls[1])
         self.assertEqual(len(rows), 2)
+
+
+class KiteRetryTest(unittest.TestCase):
+    def test_timeout_is_retried_then_succeeds(self):
+        from unittest import mock
+        from oscar import sources
+        calls = []
+        def flaky(url, headers=None):
+            calls.append(url)
+            if len(calls) < 3:
+                raise TimeoutError("The read operation timed out")
+            return b"ok"
+        with mock.patch.object(sources, "_request", flaky), mock.patch.object(sources.time, "sleep"), \
+                mock.patch.object(sources, "_kite_headers", lambda: {}):
+            self.assertEqual(sources._kite_get("u"), b"ok")
+        self.assertEqual(len(calls), 3)
+
+    def test_auth_error_is_not_retried(self):
+        from unittest import mock
+        from oscar import sources
+        calls = []
+        def denied(url, headers=None):
+            calls.append(url)
+            raise RuntimeError("HTTP Error 403: Incorrect api_key or access_token")
+        with mock.patch.object(sources, "_request", denied), mock.patch.object(sources.time, "sleep"), \
+                mock.patch.object(sources, "_kite_headers", lambda: {}):
+            with self.assertRaises(RuntimeError):
+                sources._kite_get("u")
+        self.assertEqual(len(calls), 1)

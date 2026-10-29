@@ -85,18 +85,28 @@ def kite_exchange_request_token(request_token: str) -> dict:
         raise RuntimeError(f"Kite login failed (HTTP {exc.code}): {str(detail)[:300]}") from None
 
 
+KITE_RETRIES = 3
+
+
+def _transient(exc: Exception) -> bool:
+    """Rate limits, Kite server errors, timeouts and dropped connections are worth retrying."""
+    if isinstance(exc, RuntimeError):
+        return str(exc).startswith(("HTTP Error 429", "HTTP Error 5"))
+    return isinstance(exc, (TimeoutError, ConnectionError, urllib.error.URLError, OSError))
+
+
 def _kite_get(url: str) -> bytes:
-    """Throttled Kite GET with one retry on rate limiting."""
-    for attempt in range(2):
+    """Throttled Kite GET; retries transient failures with backoff (1s, 2s, 4s)."""
+    for attempt in range(KITE_RETRIES + 1):
         wait = KITE_MIN_GAP_SECONDS - (time.monotonic() - _last_kite_call[0])
         if wait > 0:
             time.sleep(wait)
         _last_kite_call[0] = time.monotonic()
         try:
             return _request(url, _kite_headers())
-        except RuntimeError as exc:
-            if attempt == 0 and str(exc).startswith("HTTP Error 429"):
-                time.sleep(1.0)
+        except Exception as exc:
+            if attempt < KITE_RETRIES and _transient(exc):
+                time.sleep(2 ** attempt)
                 continue
             raise
 
